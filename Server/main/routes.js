@@ -8,7 +8,19 @@ Post Routes Section
 
 router.get("/api/get/allposts", (req, res, next) => {
   pool.query(
-    `SELECT * FROM posts ORDER BY date_created DESC`,
+    `SELECT * FROM posts ORDER BY date_created DESC LIMIT 10 OFFSET 0`,
+    (q_err, q_res) => {
+      if (q_err) return next(q_err); // 正确处理错误
+      res.json(q_res.rows);
+    }
+  );
+});
+
+router.get('/api/get/searchpost', (req, res, next) => {
+  const searchitem = `%${req.query.searchitem}%`; // 使用查询参数，并添加%以进行模糊匹配
+  pool.query(
+    `SELECT * FROM posts WHERE title ILIKE $1 OR body ILIKE $1 ORDER BY date_created DESC`,
+    [searchitem],
     (q_err, q_res) => {
       if (q_err) return next(q_err); // 正确处理错误
       res.json(q_res.rows);
@@ -20,20 +32,15 @@ router.get("/api/get/allposts", (req, res, next) => {
 router.get("/api/get/post/:post_id", (req, res, next) => {
   const post_id = req.params.post_id;
 
-  pool.query(
-    `SELECT * FROM posts WHERE pid=$1`,
-    [post_id],
-    (q_err, q_res) => {
-      if (q_err) return next(q_err);
-      if (q_res.rows.length > 0) {
-        res.json(q_res.rows[0]); // 返回查询结果中的第一条
-      } else {
-        res.status(404).json({ error: "Post not found" });
-      }
+  pool.query(`SELECT * FROM posts WHERE pid=$1`, [post_id], (q_err, q_res) => {
+    if (q_err) return next(q_err);
+    if (q_res.rows.length > 0) {
+      res.json(q_res.rows[0]); // 返回查询结果中的第一条
+    } else {
+      res.status(404).json({ error: "Post not found" });
     }
-  );
+  });
 });
-
 
 router.post("/api/post/poststodb", (req, res, next) => {
   const values = [
@@ -71,6 +78,43 @@ router.put("/api/put/post", (req, res, next) => {
   );
 });
 
+router.put("/api/put/likes", (req, res, next) => {
+  const uid = [req.body.uid];
+  const post_id = String(req.body.post_id);
+  const values = [uid, post_id];
+
+  pool.query(
+    `UPDATE posts SET like_user_id = like_user_id || $1, likes = likes +1 WHERE NOT (like_user_id @> $1) AND pid=$2`,
+    values,
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json(q_res.rows);
+    }
+  );
+});
+
+router.put("/api/put/unlike", (req, res, next) => {
+  const { uid, post_id } = req.body;
+
+  pool.query(
+    `UPDATE posts 
+     SET like_user_id = array_remove(like_user_id, $1), 
+         likes = likes - 1 
+     WHERE pid = $2 AND $1 = ANY(like_user_id)`,
+    [uid, post_id],
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json(q_res.rows);
+    }
+  );
+});
+
+
+
+
+
+
+
 router.delete("/api/delete/postcomments", (req, res, next) => {
   const post_id = req.body.post_id;
   pool.query(
@@ -82,6 +126,8 @@ router.delete("/api/delete/postcomments", (req, res, next) => {
     }
   );
 });
+
+
 
 router.delete("/api/delete/post", (req, res, next) => {
   const post_id = req.body.post_id;
@@ -102,7 +148,12 @@ router.post("/api/post/commenttodb", (req, res, next) => {
 
   // 检查所有必需的字段是否存在
   if (!comment || !user_id || !username || !post_id) {
-    console.error("Missing required fields", { comment, user_id, username, post_id }); // 打印缺失的字段
+    console.error("Missing required fields", {
+      comment,
+      user_id,
+      username,
+      post_id,
+    }); // 打印缺失的字段
     return res.status(400).json({ error: "Missing required fields" });
   }
 
@@ -121,7 +172,6 @@ router.post("/api/post/commenttodb", (req, res, next) => {
     }
   );
 });
-
 
 router.put("/api/put/commenttodb", (req, res, next) => {
   const values = [
@@ -183,12 +233,11 @@ router.delete("/api/delete/comment", (req, res, next) => {
 //   );
 // });
 
-
 router.get("/api/get/allpostcomments/:post_id", (req, res, next) => {
   const post_id = req.params.post_id;
 
   pool.query(
-    `SELECT * FROM comments WHERE post_id=$1`,
+    `SELECT * FROM comments WHERE post_id=$1 ORDER BY date_created DESC LIMIT 10 OFFSET 0`,
     [post_id],
     (q_err, q_res) => {
       if (q_err) return next(q_err);
@@ -201,15 +250,14 @@ router.get("/api/get/allpostcomments/:post_id", (req, res, next) => {
   );
 });
 
-
 /*
 User Route Section
 */
 router.post("/api/post/userprofiletodb", (req, res, next) => {
   console.log("Request body:", req.body); // Debug log
-  
+
   const { nickname, email, email_verified } = req.body;
-  
+
   // 检查所有必需的字段是否存在
   if (!nickname || !email || email_verified === undefined) {
     console.error("Missing required fields"); // Debug log
@@ -232,14 +280,18 @@ router.post("/api/post/userprofiletodb", (req, res, next) => {
     }
   );
 });
-  
+
 router.get("/api/get/userprofilefromdb", (req, res, next) => {
   const username = String(req.query.username); // 使用 req.query 获取 GET 请求的查询参数
 
-  pool.query(`SELECT * FROM users WHERE username=$1`, [username], (q_err, q_res) => {
-    if (q_err) return next(q_err);
-    res.json(q_res.rows); // 返回查询结果
-  });
+  pool.query(
+    `SELECT * FROM users WHERE username=$1`,
+    [username],
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json(q_res.rows); // 返回查询结果
+    }
+  );
 });
 
 router.get("/api/get/userposts", (req, res, next) => {
@@ -255,8 +307,92 @@ router.get("/api/get/userposts", (req, res, next) => {
   );
 });
 
-router.get("/hello", function (req, res) {
-  res.json("hello from express");
+// router.get("/hello", function (req, res) {
+//   res.json("hello from express");
+// });
+
+
+router.get('/api/get/authorprofilefromdb', (req, res, next) => {
+  const username = String(req.query.username);
+
+  pool.query(
+    `SELECT * FROM users WHERE username=$1`,
+    [username],
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json(q_res.rows);
+    }
+  );
 });
+
+router.get('/api/get/otheruserposts', (req, res, next) => {
+  const username = String(req.query.username);
+
+  pool.query(
+    `SELECT * FROM posts WHERE author=$1`,
+    [username],
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json(q_res.rows);
+    }
+  );
+});
+
+
+/*
+Message Section
+*/
+
+router.post('/api/post/messagetodb', (req, res, next) => {
+  const from_username = String(req.body.message_sender);
+  const to_username = String(req.body.message_to);
+  const title = String(req.body.title);
+  const body = String(req.body.body);
+
+  if (!from_username || !to_username || !title || !body) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  const values = [from_username, to_username, title, body];
+
+  pool.query(
+    `INSERT INTO messages(message_sender, message_to, message_title, message_body, date_created)
+    VALUES($1, $2, $3, $4, NOW())`,
+    values,
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.status(201).json({ message: "Message sent successfully" });
+    }
+  );
+});
+
+// 获取用户消息
+router.get('/api/get/usermessages', (req, res, next) => {
+  const username = String(req.query.username);
+
+  pool.query(
+    `SELECT * FROM messages WHERE message_to=$1`,
+    [username],
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json(q_res.rows);
+    }
+  );
+});
+
+// 删除用户消息
+router.delete('/api/delete/usermessage', (req, res, next) => {
+  const mid = String(req.body.mid);
+
+  pool.query(
+    `DELETE FROM messages WHERE mid=$1`,
+    [mid],
+    (q_err, q_res) => {
+      if (q_err) return next(q_err);
+      res.json({ message: "Message deleted successfully" });
+    }
+  );
+});
+
 
 module.exports = router;

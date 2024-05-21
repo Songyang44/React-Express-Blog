@@ -13,7 +13,9 @@ CREATE TABLE posts (
     body TEXT,
     user_id INT REFERENCES users(uid),
     author VARCHAR(255) REFERENCES users(username),
-    date_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    date_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    like_user_id INT[] DEFAULT ARRAY[]::INT[],
+    likes INT DEFAULT 0
 );
 
 CREATE TABLE comments(
@@ -24,3 +26,12 @@ CREATE TABLE comments(
     post_id INT REFERENCES posts(pid),
     date_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+
+CREATE TABLE messages(
+mid SERIAL PRIMARY KEY,
+    message_sender VARCHAR(255) REFERENCES users(username),
+    message_to VARCHAR(255) REFERENCES users(username),
+    message_title VARCHAR(255),
+    message_body VARCHAR(255),
+    date_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
